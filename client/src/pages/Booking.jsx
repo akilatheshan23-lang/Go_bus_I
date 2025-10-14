@@ -111,31 +111,47 @@ export default function Booking() {
   };
 
   const validate = () => {
-    const seatCount = selected.length;
-    if (seatCount === 0) {
-      setMessage('Please select at least one seat');
-      return false;
+  const seatCount = selected.length;
+  const errs = new Array(seatCount).fill(0).map(() => ({}));
+  let isValid = true;
+
+  const phoneRegex = /^\d{10}$/;
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  for (let i = 0; i < seatCount; i++) {
+    const passenger = passengers[i];
+
+    // Required field check
+    ['name', 'nic', 'phone', 'email'].forEach(field => {
+      if (!passenger[field]) {
+        errs[i][field] = 'Required';
+        isValid = false;
+      }
+    });
+
+    // Phone validation
+    if (passenger.phone && !phoneRegex.test(passenger.phone)) {
+      errs[i].phone = 'Phone must be 10 digits';
+      isValid = false;
     }
 
-    const errs = new Array(seatCount).fill(0).map(() => ({}));
-    let isValid = true;
-
-    for (let i = 0; i < seatCount; i++) {
-      const passenger = passengers[i];
-      ['name', 'nic', 'phone', 'email'].forEach(field => {
-        if (!passenger[field]) {
-          errs[i][field] = 'Required';
-          isValid = false;
-        }
-      });
+    // Email validation
+    if (passenger.email && !emailRegex.test(passenger.email)) {
+      errs[i].email = 'Invalid email address';
+      isValid = false;
     }
+  }
 
-    setErrors(errs);
-    if (!isValid) {
-      setMessage('Please fill all passenger details');
-    }
-    return isValid;
-  };
+  setErrors(errs);
+  if (!isValid) {
+    setMessage(
+      'Please correct the highlighted passenger details (phone must be 10 digits; email must be valid).'
+    );
+  }
+
+  return isValid;
+};
+
 
   const proceed = async () => {
     if (!validate()) return;
