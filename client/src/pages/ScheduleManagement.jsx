@@ -2,8 +2,9 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext.jsx";
 import axios from "axios";
-import jsPDF from "jspdf";
-import "jspdf-autotable";
+import { generateSchedulePDF } from "../utils/pdfUtils.js";
+
+
 const API = import.meta.env.VITE_API_URL || "http://localhost:5002";
 
 
@@ -68,75 +69,7 @@ export default function ScheduleManagement() {
     }
   };
 
-  // PDF Download function
-  const downloadSchedulePDF = () => {
-    const doc = new jsPDF();
-    
-    // Add title
-    doc.setFontSize(20);
-    doc.setFont(undefined, 'bold');
-    doc.text('Bus Schedule Report', 14, 22);
-    
-    // Add date
-    doc.setFontSize(10);
-    doc.setFont(undefined, 'normal');
-    doc.text(`Generated on: ${new Date().toLocaleDateString()}`, 14, 30);
-    
-    // Prepare table data
-    const tableData = filteredSchedules.map(schedule => [
-      schedule.from,
-      schedule.to,
-      new Date(schedule.date).toLocaleDateString(),
-      schedule.departureTime,
-      schedule.arrivalTime,
-      schedule.bus?.busNo || 'N/A',
-      schedule.driver?.name || 'Not Assigned',
-      `Rs. ${schedule.price}`,
-      schedule.active ? 'Active' : 'Inactive'
-    ]);
-    
-    // Add table
-    doc.autoTable({
-      head: [['From', 'To', 'Date', 'Departure', 'Arrival', 'Bus No', 'Driver', 'Price', 'Status']],
-      body: tableData,
-      startY: 35,
-      styles: {
-        fontSize: 8,
-        cellPadding: 3,
-      },
-      headStyles: {
-        fillColor: [79, 70, 229], // Purple color matching the theme
-        textColor: 255,
-        fontStyle: 'bold'
-      },
-      alternateRowStyles: {
-        fillColor: [248, 250, 252] // Light gray for alternate rows
-      },
-      columnStyles: {
-        0: { cellWidth: 20 }, // From
-        1: { cellWidth: 20 }, // To
-        2: { cellWidth: 25 }, // Date
-        3: { cellWidth: 20 }, // Departure
-        4: { cellWidth: 20 }, // Arrival
-        5: { cellWidth: 15 }, // Bus No
-        6: { cellWidth: 25 }, // Driver
-        7: { cellWidth: 20 }, // Price
-        8: { cellWidth: 15 }  // Status
-      }
-    });
-    
-    // Add footer
-    const pageCount = doc.internal.getNumberOfPages();
-    for (let i = 1; i <= pageCount; i++) {
-      doc.setPage(i);
-      doc.setFontSize(8);
-      doc.text(`Page ${i} of ${pageCount}`, 14, doc.internal.pageSize.height - 10);
-    }
-    
-    // Download the PDF
-    doc.save(`bus-schedule-${new Date().toISOString().split('T')[0]}.pdf`);
-  };
-
+  
 
   useEffect(() => {
     if (!loading) {
@@ -500,12 +433,13 @@ export default function ScheduleManagement() {
             <p className="text-gray-600">Create and manage bus schedules and routes</p>
           </div>
           <div className="flex gap-3">
-            <button
-              onClick={downloadSchedulePDF}
-              className="px-6 py-3 text-purple-600 transition-colors bg-white border border-purple-600 rounded-lg hover:bg-purple-50"
-            >
-              📄 Download PDF
-            </button>
+         <button
+               onClick={() => generateSchedulePDF(filteredSchedules)}
+             className="px-6 py-3 text-purple-600 transition-colors bg-white border border-purple-600 rounded-lg hover:bg-purple-50"
+          >
+         📄 Download PDF
+          </button>
+                      
             <button
               onClick={() => setShowAddForm(!showAddForm)}
               className="px-6 py-3 text-white transition-colors bg-purple-600 rounded-lg hover:bg-purple-700"
