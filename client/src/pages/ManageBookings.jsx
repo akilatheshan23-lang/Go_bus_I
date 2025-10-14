@@ -9,6 +9,75 @@ import {
 } from '../services/bookingService.js';
 
 const ManageBookings = () => {
+
+  // --- PDF Report Generation for Confirmed Bookings ---
+  const loadJsPDF = async () => {
+    if (window.jspdf && window.jspdf.jsPDF) return window.jspdf.jsPDF;
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+      s.onload = resolve;
+      s.onerror = reject;
+      document.body.appendChild(s);
+    });
+    return window.jspdf.jsPDF;
+  };
+
+  const downloadConfirmedReport = async () => {
+    try {
+      const jsPDF = await loadJsPDF();
+      const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+      const margin = 40;
+      let y = margin;
+
+      const title = 'GoBus — Confirmed Bookings Report';
+      doc.setFontSize(16);
+      doc.text(title, margin, y);
+      y += 20;
+
+      const genOn = 'Generated: ' + new Date().toLocaleString();
+      doc.setFontSize(10);
+      doc.text(genOn, margin, y);
+      y += 20;
+
+      const confirmed = bookings.filter(b => b.status === 'confirmed');
+      if (confirmed.length === 0) {
+        doc.text('No confirmed bookings found for current filters.', margin, y);
+        doc.save('confirmed_bookings_report.pdf');
+        return;
+      }
+
+      doc.setFontSize(12);
+      confirmed.forEach((b, idx) => {
+        const block = [
+          `#${idx + 1} — Booking ID: ${b.bookingId}`,
+          (() => {
+            const d = new Date(b.createdAt || b.bookingDate);
+            const createdStr = isNaN(d.getTime()) ? 'Unknown' : d.toLocaleString();
+            return `Created: ${createdStr}`;
+          })(),
+          `Passenger: ${b.passengerDetails?.name || ''} | ${b.passengerDetails?.email || ''} | ${b.passengerDetails?.phone || ''}`,
+          `Seats: ${(b.selectedSeats || []).map(s => s.seatNumber || s).join(', ')}`,
+          `Status: ${b.status}`
+        ].join('\n');
+
+        const lines = doc.splitTextToSize(block, 515);
+        if (y + lines.length * 14 > 800) { // new page if near bottom
+          doc.addPage();
+          y = margin;
+        }
+        doc.text(lines, margin, y);
+        y += (lines.length * 14) + 10;
+      });
+
+      const fileName = `confirmed_bookings_${new Date().toISOString().slice(0,10)}.pdf`;
+      doc.save(fileName);
+    } catch (e) {
+      console.error('PDF generation failed', e);
+      alert('Could not generate PDF. Please check your internet connection and try again.');
+    }
+  };
+  // --- end PDF generation ---
   const { user, isAuthenticated, loading } = useAuth();
   const navigate = useNavigate();
   
@@ -123,7 +192,7 @@ const ManageBookings = () => {
       <div className="mx-auto max-w-7xl">
         {/* Header */}
         <div className="mb-6">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between">\n            <button onClick={downloadConfirmedReport} className="px-4 py-2 text-purple-600 border border-purple-400 rounded-lg hover:bg-purple-50">Download PDF</button>
             <h1 className="text-3xl font-bold text-gray-800">Manage Bookings</h1>
             <div className="text-sm text-gray-600">
               Total Bookings: {bookings.length}
