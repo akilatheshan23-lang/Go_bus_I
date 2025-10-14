@@ -2,7 +2,10 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext.jsx";
 import axios from "axios";
-const API = import.meta.env.VITE_API_URL || "http://localhost:5001";
+import jsPDF from "jspdf";
+import "jspdf-autotable";
+const API = import.meta.env.VITE_API_URL || "http://localhost:5002";
+
 
 export default function ScheduleManagement() {
   const { user, isAuthenticated, loading } = useAuth();
@@ -17,6 +20,7 @@ export default function ScheduleManagement() {
   const [dateFilter, setDateFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [msg, setMsg] = useState("");
+  const [fieldErrors, setFieldErrors] = useState({});
   
   const [scheduleForm, setScheduleForm] = useState({
     from: "",
@@ -42,6 +46,97 @@ export default function ScheduleManagement() {
     { from: 'Kandy', to: 'Colombo' },
     { from: 'Galle', to: 'Colombo' }
   ];
+
+  // Validation helper functions
+  const validateLocationField = (value) => {
+    const letterOnlyRegex = /^[A-Za-z\s]*$/;
+    return letterOnlyRegex.test(value);
+  };
+
+  const handleLocationChange = (field, value) => {
+    if (validateLocationField(value)) {
+      const newForm = {...scheduleForm, [field]: value};
+      setScheduleForm(newForm);
+      
+      // Check if both fields have values and are the same
+      if (newForm.from && newForm.to && 
+          newForm.from.toLowerCase().trim() === newForm.to.toLowerCase().trim()) {
+        setFieldErrors({...fieldErrors, [field]: "From and To locations cannot be the same"});
+      } else {
+        setFieldErrors({...fieldErrors, [field]: ""});
+      }
+    }
+  };
+
+  // PDF Download function
+  const downloadSchedulePDF = () => {
+    const doc = new jsPDF();
+    
+    // Add title
+    doc.setFontSize(20);
+    doc.setFont(undefined, 'bold');
+    doc.text('Bus Schedule Report', 14, 22);
+    
+    // Add date
+    doc.setFontSize(10);
+    doc.setFont(undefined, 'normal');
+    doc.text(`Generated on: ${new Date().toLocaleDateString()}`, 14, 30);
+    
+    // Prepare table data
+    const tableData = filteredSchedules.map(schedule => [
+      schedule.from,
+      schedule.to,
+      new Date(schedule.date).toLocaleDateString(),
+      schedule.departureTime,
+      schedule.arrivalTime,
+      schedule.bus?.busNo || 'N/A',
+      schedule.driver?.name || 'Not Assigned',
+      `Rs. ${schedule.price}`,
+      schedule.active ? 'Active' : 'Inactive'
+    ]);
+    
+    // Add table
+    doc.autoTable({
+      head: [['From', 'To', 'Date', 'Departure', 'Arrival', 'Bus No', 'Driver', 'Price', 'Status']],
+      body: tableData,
+      startY: 35,
+      styles: {
+        fontSize: 8,
+        cellPadding: 3,
+      },
+      headStyles: {
+        fillColor: [79, 70, 229], // Purple color matching the theme
+        textColor: 255,
+        fontStyle: 'bold'
+      },
+      alternateRowStyles: {
+        fillColor: [248, 250, 252] // Light gray for alternate rows
+      },
+      columnStyles: {
+        0: { cellWidth: 20 }, // From
+        1: { cellWidth: 20 }, // To
+        2: { cellWidth: 25 }, // Date
+        3: { cellWidth: 20 }, // Departure
+        4: { cellWidth: 20 }, // Arrival
+        5: { cellWidth: 15 }, // Bus No
+        6: { cellWidth: 25 }, // Driver
+        7: { cellWidth: 20 }, // Price
+        8: { cellWidth: 15 }  // Status
+      }
+    });
+    
+    // Add footer
+    const pageCount = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i);
+      doc.setFontSize(8);
+      doc.text(`Page ${i} of ${pageCount}`, 14, doc.internal.pageSize.height - 10);
+    }
+    
+    // Download the PDF
+    doc.save(`bus-schedule-${new Date().toISOString().split('T')[0]}.pdf`);
+  };
+
 
   useEffect(() => {
     if (!loading) {
@@ -73,6 +168,75 @@ export default function ScheduleManagement() {
       setMsg("Failed to load data: " + (error.response?.data?.error || error.message));
     }
   }
+
+  useEffect(() => {
+    if (scheduleForm.departureTime) {
+      const [hours, minutes] = scheduleForm.departureTime.split(':').map(Number);
+      let totalMinutes = hours * 60 + minutes - 30;
+      
+      if (totalMinutes < 0) {
+        totalMinutes += 24 * 60;
+      }
+      
+      const closeHours = Math.floor(totalMinutes / 60) % 24;
+      const closeMinutes = totalMinutes % 60;
+      const bookingCloseTime = String(closeHours).padStart(2, '0') + ':' + String(closeMinutes).padStart(2, '0');
+      
+      setScheduleForm(prev => ({
+        ...prev,
+        bookingCloseTime
+      }));
+
+      // VALIDATION: ensure bookingCloseTime is before departureTime and not in the past for today's date
+      const timeToMinutes = (t) => {
+        if (!t) return null;
+        const [h, m] = t.split(':').map(Number);
+        return h * 60 + m;
+      };
+
+      const depMinutes = timeToMinutes(scheduleForm.departureTime);
+      const closeMinutesVal = timeToMinutes(bookingCloseTime);
+
+      // default clear
+      let bookingCloseError = "";
+      let departureError = "";
+
+      if (closeMinutesVal === null || depMinutes === null) {
+        bookingCloseError = "";
+      } else {
+        // check that booking close is strictly before departure
+        if (closeMinutesVal >= depMinutes) {
+          bookingCloseError = "Booking close time must be before departure time.";
+        } else {
+          // if schedule date is today, ensure booking close hasn't already passed
+          const todayStr = new Date().toISOString().split('T')[0];
+          if (scheduleForm.date === todayStr) {
+            const now = new Date();
+            const nowMinutes = now.getHours() * 60 + now.getMinutes();
+            if (closeMinutesVal <= nowMinutes) {
+              bookingCloseError = "Booking close time is already in the past for the selected date.";
+            }
+          }
+        }
+      }
+
+      // If date is today, ensure departure is in the future
+      const todayStr = new Date().toISOString().split('T')[0];
+      if (scheduleForm.date === todayStr && depMinutes !== null) {
+        const now = new Date();
+        const nowMinutes = now.getHours() * 60 + now.getMinutes();
+        if (depMinutes <= nowMinutes) {
+          departureError = "Departure time must be in the future for the selected date.";
+        }
+      }
+
+      setFieldErrors(prev => ({ 
+        ...prev, 
+        bookingCloseTime: bookingCloseError,
+        departureTime: departureError
+      }));
+    }
+  }, [scheduleForm.departureTime, scheduleForm.date]);
 
   function filterSchedules() {
     let filtered = [...schedules];
@@ -109,6 +273,52 @@ export default function ScheduleManagement() {
 
   async function handleSubmit(e) {
     e.preventDefault();
+    
+    // Validate From and To fields contain only letters and spaces
+    const letterOnlyRegex = /^[A-Za-z\s]+$/;
+    if (!letterOnlyRegex.test(scheduleForm.from)) {
+      setMsg("Error: From location must contain only letters and spaces.");
+      return;
+    }
+    if (!letterOnlyRegex.test(scheduleForm.to)) {
+      setMsg("Error: To location must contain only letters and spaces.");
+      return;
+    }
+    
+    // Validate From and To are not the same
+    if (scheduleForm.from.toLowerCase().trim() === scheduleForm.to.toLowerCase().trim()) {
+      setMsg("Error: From and To locations cannot be the same.");
+      return;
+    }
+    
+    // Validate date is not in the past
+    const selectedDate = new Date(scheduleForm.date);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); // Reset time to start of day for accurate comparison
+    
+    if (selectedDate < today) {
+      setMsg("Error: Schedule date cannot be in the past. Please select today or a future date.");
+      return;
+    }
+
+    // Prevent departure time in the past when date is today
+    const toMinutes = (t) => {
+      if (!t) return null;
+      const [h, m] = t.split(':').map(Number);
+      return h * 60 + m;
+    };
+    const todayStr = new Date().toISOString().split('T')[0];
+    if (scheduleForm.date === todayStr && scheduleForm.departureTime) {
+      const now = new Date();
+      const nowMin = now.getHours() * 60 + now.getMinutes();
+      const depMin = toMinutes(scheduleForm.departureTime);
+      if (depMin === null || depMin <= nowMin) {
+        setMsg("Error: Departure time must be in the future for today.");
+        setFieldErrors(prev => ({ ...prev, departureTime: "Departure time must be in the future." }));
+        return;
+      }
+    }
+    
     // Validate arrival after departure
     const dep = scheduleForm.departureTime;
     const arr = scheduleForm.arrivalTime;
@@ -120,6 +330,46 @@ export default function ScheduleManagement() {
       const arrMinutes = arrH * 60 + arrM;
       if (arrMinutes <= depMinutes) {
         setMsg("Error: Arrival time must be after departure time.");
+        return;
+      }
+    }
+    
+    // Validate booking close time (must be before departure, and not past if date is today)
+    if (scheduleForm.bookingCloseTime && scheduleForm.departureTime) {
+      const toMinutesLocal = (t) => {
+        const [h, m] = t.split(':').map(Number);
+        return h * 60 + m;
+      };
+      const closeMin = toMinutesLocal(scheduleForm.bookingCloseTime);
+      const depMin = toMinutesLocal(scheduleForm.departureTime);
+
+      if (closeMin >= depMin) {
+        setMsg("Error: Booking close time must be before departure time.");
+        setFieldErrors(prev => ({ ...prev, bookingCloseTime: "Booking close time must be before departure time." }));
+        return;
+      }
+
+      const todayStrLocal = new Date().toISOString().split('T')[0];
+      if (scheduleForm.date === todayStrLocal) {
+        const now = new Date();
+        const nowMin = now.getHours() * 60 + now.getMinutes();
+        if (closeMin <= nowMin) {
+          setMsg("Error: Booking close time is already in the past for the selected date.");
+          setFieldErrors(prev => ({ ...prev, bookingCloseTime: "Booking close time is already in the past." }));
+          return;
+        }
+      }
+    }
+    
+    // Validate end recurring date is not in the past (if provided)
+    if (scheduleForm.endRecurringDate) {
+      const endDate = new Date(scheduleForm.endRecurringDate);
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      tomorrow.setHours(0, 0, 0, 0);
+      
+      if (endDate < tomorrow) {
+        setMsg("Error: End recurring date must be tomorrow or later.");
         return;
       }
     }
@@ -155,6 +405,7 @@ export default function ScheduleManagement() {
       endRecurringDate: "",
       notes: ""
     });
+    setFieldErrors({});
     setShowAddForm(false);
     setEditingSchedule(null);
   }
@@ -248,12 +499,20 @@ export default function ScheduleManagement() {
             <h1 className="text-4xl font-bold text-gray-900">Schedule Management</h1>
             <p className="text-gray-600">Create and manage bus schedules and routes</p>
           </div>
-          <button
-            onClick={() => setShowAddForm(!showAddForm)}
-            className="px-6 py-3 text-white transition-colors bg-purple-600 rounded-lg hover:bg-purple-700"
-          >
-            {showAddForm ? "Cancel" : "Add New Schedule"}
-          </button>
+          <div className="flex gap-3">
+            <button
+              onClick={downloadSchedulePDF}
+              className="px-6 py-3 text-purple-600 transition-colors bg-white border border-purple-600 rounded-lg hover:bg-purple-50"
+            >
+              📄 Download PDF
+            </button>
+            <button
+              onClick={() => setShowAddForm(!showAddForm)}
+              className="px-6 py-3 text-white transition-colors bg-purple-600 rounded-lg hover:bg-purple-700"
+            >
+              {showAddForm ? "Cancel" : "Add New Schedule"}
+            </button>
+          </div>
         </div>
 
         {/* Stats Cards */}
@@ -351,22 +610,32 @@ export default function ScheduleManagement() {
                     <input
                       type="text"
                       value={scheduleForm.from}
-                      onChange={(e) => setScheduleForm({...scheduleForm, from: e.target.value})}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      onChange={(e) => handleLocationChange('from', e.target.value)}
+                      className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent ${
+                        fieldErrors.from ? 'border-red-500' : 'border-gray-300'
+                      }`}
                       required
                       placeholder="Starting city"
                     />
+                    {fieldErrors.from && (
+                      <p className="mt-1 text-sm text-red-600">{fieldErrors.from}</p>
+                    )}
                   </div>
                   <div>
                     <label className="block mb-2 text-sm font-medium text-gray-700">To *</label>
                     <input
                       type="text"
                       value={scheduleForm.to}
-                      onChange={(e) => setScheduleForm({...scheduleForm, to: e.target.value})}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      onChange={(e) => handleLocationChange('to', e.target.value)}
+                      className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent ${
+                        fieldErrors.to ? 'border-red-500' : 'border-gray-300'
+                      }`}
                       required
                       placeholder="Destination city"
                     />
+                    {fieldErrors.to && (
+                      <p className="mt-1 text-sm text-red-600">{fieldErrors.to}</p>
+                    )}
                   </div>
                 </div>
               </div>
@@ -381,6 +650,7 @@ export default function ScheduleManagement() {
                       type="date"
                       value={scheduleForm.date}
                       onChange={(e) => setScheduleForm({...scheduleForm, date: e.target.value})}
+                      min={new Date().toISOString().split('T')[0]}
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                       required
                     />
@@ -476,6 +746,7 @@ export default function ScheduleManagement() {
                     type="date"
                     value={scheduleForm.endRecurringDate}
                     onChange={(e) => setScheduleForm({...scheduleForm, endRecurringDate: e.target.value})}
+                    min={new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split('T')[0]}
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg md:w-64 focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                   />
                 </div>

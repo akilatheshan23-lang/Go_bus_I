@@ -4,7 +4,6 @@ import morgan from "morgan";
 import dotenv from "dotenv";
 import cookieParser from "cookie-parser";
 import mongoose from "mongoose";
-
 import publicRouter from "./routes/public.js";
 import authRouter from "./routes/auth.js";
 import adminRouter from "./routes/admin.js";
