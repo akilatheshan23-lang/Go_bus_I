@@ -19,6 +19,7 @@
     "mongoose": "^8.5.0",
     "morgan": "^1.10.0",
     "nanoid": "^5.1.5",
+    "nodemailer": "^7.0.9",
     "stripe": "^18.5.0"
   },
   "devDependencies": {

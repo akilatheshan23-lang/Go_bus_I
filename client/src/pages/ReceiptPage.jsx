@@ -1,11 +1,24 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import QRCode from 'qrcode'; // ✅ ADD: QR code library
 const API = import.meta.env.VITE_API_URL || "http://localhost:5001";
-//mino
 
-
+// =======================
 // E-Ticket Component
+// =======================
 const ETicket = ({ booking, payment }) => {
+    const [qrCode, setQrCode] = useState('');
+
+    useEffect(() => {
+        const qrData = booking?._id || payment?._id || '';
+        if (qrData) {
+            // ✅ Generate QR Code as Base64 Image
+            QRCode.toDataURL(qrData)
+                .then(url => setQrCode(url))
+                .catch(err => console.error('QR generation error:', err));
+        }
+    }, [booking, payment]);
+
     return (
         <div className="overflow-hidden bg-white border border-gray-200 rounded-xl shadow-lg">
             <div className="flex">
@@ -23,7 +36,9 @@ const ETicket = ({ booking, payment }) => {
                         <div className="flex items-center">
                             <div className="w-8 text-gray-600">👤</div>
                             <div>
-                                <p className="font-medium text-gray-900">{booking?.passengerDetails?.name || payment?.passengerName}</p>
+                                <p className="font-medium text-gray-900">
+                                    {booking?.passengerDetails?.name || payment?.passengerName}
+                                </p>
                                 <p className="text-sm text-gray-500">Passenger</p>
                             </div>
                         </div>
@@ -31,7 +46,9 @@ const ETicket = ({ booking, payment }) => {
                         <div className="flex items-center">
                             <div className="w-8 text-gray-600">🛣️</div>
                             <div>
-                                <p className="font-medium text-gray-900">{booking?.schedule?.from} → {booking?.schedule?.to}</p>
+                                <p className="font-medium text-gray-900">
+                                    {booking?.schedule?.from} → {booking?.schedule?.to}
+                                </p>
                                 <p className="text-sm text-gray-500">Route</p>
                             </div>
                         </div>
@@ -40,7 +57,9 @@ const ETicket = ({ booking, payment }) => {
                             <div className="w-8 text-gray-600">📅</div>
                             <div>
                                 <p className="font-medium text-gray-900">
-                                    {booking?.schedule?.date ? new Date(booking.schedule.date).toLocaleDateString() : 'N/A'}
+                                    {booking?.schedule?.date
+                                        ? new Date(booking.schedule.date).toLocaleDateString()
+                                        : 'N/A'}
                                 </p>
                                 <p className="text-sm text-gray-500">Travel Date</p>
                             </div>
@@ -49,7 +68,9 @@ const ETicket = ({ booking, payment }) => {
                         <div className="flex items-center">
                             <div className="w-8 text-gray-600">🕐</div>
                             <div>
-                                <p className="font-medium text-gray-900">{booking?.schedule?.departureTime || 'N/A'}</p>
+                                <p className="font-medium text-gray-900">
+                                    {booking?.schedule?.departureTime || 'N/A'}
+                                </p>
                                 <p className="text-sm text-gray-500">Departure Time</p>
                             </div>
                         </div>
@@ -57,7 +78,9 @@ const ETicket = ({ booking, payment }) => {
                         <div className="flex items-center">
                             <div className="w-8 text-gray-600">💺</div>
                             <div>
-                                <p className="font-medium text-gray-900">Seat {booking?.seatNumbers?.join(', ') || 'N/A'}</p>
+                                <p className="font-medium text-gray-900">
+                                    Seat {booking?.seatNumbers?.join(', ') || 'N/A'}
+                                </p>
                                 <p className="text-sm text-gray-500">Seat Number(s)</p>
                             </div>
                         </div>
@@ -65,7 +88,9 @@ const ETicket = ({ booking, payment }) => {
                         <div className="flex items-center">
                             <div className="w-8 text-gray-600">🚌</div>
                             <div>
-                                <p className="font-medium text-gray-900">{booking?.schedule?.bus?.busNo || 'N/A'}</p>
+                                <p className="font-medium text-gray-900">
+                                    {booking?.schedule?.bus?.busNo || 'N/A'}
+                                </p>
                                 <p className="text-sm text-gray-500">Bus Number</p>
                             </div>
                         </div>
@@ -75,11 +100,21 @@ const ETicket = ({ booking, payment }) => {
                 {/* Right Side - QR Code */}
                 <div className="w-48 p-6 bg-gradient-to-b from-gray-50 to-gray-100 text-center">
                     <h3 className="font-semibold text-gray-700 mb-4">Boarding Pass</h3>
+
                     <div className="bg-white p-3 rounded-lg shadow-sm mb-3 inline-block">
-                        <div className="w-24 h-24 bg-gray-200 rounded flex items-center justify-center text-xs text-gray-500">
-                            QR Code
-                        </div>
+                        {qrCode ? (
+                            <img
+                                src={qrCode}
+                                alt="QR Code"
+                                className="w-24 h-24 rounded border"
+                            />
+                        ) : (
+                            <div className="w-24 h-24 bg-gray-200 rounded flex items-center justify-center text-xs text-gray-500">
+                                QR Code
+                            </div>
+                        )}
                     </div>
+
                     <div className="text-xs text-gray-500 font-mono break-all">
                         {booking?._id || payment?._id}
                     </div>
@@ -92,7 +127,9 @@ const ETicket = ({ booking, payment }) => {
     );
 };
 
+// =======================
 // Success Animation Component
+// =======================
 const SuccessAnimation = ({ show }) => {
     if (!show) return null;
     
@@ -105,7 +142,9 @@ const SuccessAnimation = ({ show }) => {
     );
 };
 
-// The Main Receipt Page Component
+// =======================
+// Main Receipt Page
+// =======================
 const ReceiptPage = () => {
     const { id: paymentId } = useParams();
     const navigate = useNavigate();
@@ -124,7 +163,6 @@ const ReceiptPage = () => {
         
         const fetchData = async () => {
             try {
-                // Fetch payment data
                 const paymentResponse = await fetch(`${API}/api/payments/${paymentId}`, {
                     credentials: 'include'
                 });
@@ -133,7 +171,6 @@ const ReceiptPage = () => {
                     const paymentData = await paymentResponse.json();
                     setPayment(paymentData);
                     
-                    // Fetch booking data if bookingId exists
                     if (paymentData.bookingId) {
                         const bookingResponse = await fetch(`${API}/api/booking/${paymentData.bookingId}`, {
                             credentials: 'include'

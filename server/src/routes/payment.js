@@ -1,4 +1,5 @@
 import express from 'express';
+import nodemailer from 'nodemailer';
 import Payment from '../models/Payment.js';
 import Booking from '../models/Booking.js';
 import { requireAuth } from './_authMiddleware.js';
@@ -6,257 +7,293 @@ import { getTripStore, setSeatStatus, getAllTrips } from '../store.js';
 
 const router = express.Router();
 
+/* ================= EMAIL FUNCTION ================= */
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
+  tls: {
+    rejectUnauthorized: false, // 🔥 FIX self-signed certificate error
+  },
+});
+
+
+
+const sendPaymentSuccessEmail = async (to, ticketData) => {
+  try {
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS,
+      },
+    });
+
+    const { passengerName, from, toLocation, date, time, seat, busNo, amount, transactionId } = ticketData;
+
+    const html = `
+      <div style="font-family:Poppins,Arial,sans-serif;color:#333;line-height:1.6;">
+        <h2 style="color:#007bff;">🚌 GoBus - Payment Successful</h2>
+        <p>Dear <b>${passengerName}</b>,</p>
+        <p>Your payment has been received and your booking confirmed. Below are your travel details:</p>
+        <table style="border-collapse:collapse;margin-top:10px;">
+          <tr><td><b>Route:</b></td><td>${from} → ${toLocation}</td></tr>
+          <tr><td><b>Date:</b></td><td>${date}</td></tr>
+          <tr><td><b>Time:</b></td><td>${time}</td></tr>
+          <tr><td><b>Seat:</b></td><td>${seat}</td></tr>
+          <tr><td><b>Bus Number:</b></td><td>${busNo}</td></tr>
+          <tr><td><b>Amount Paid:</b></td><td>LKR ${amount}</td></tr>
+          <tr><td><b>Transaction ID:</b></td><td>${transactionId}</td></tr>
+        </table>
+        <p style="margin-top:15px;">📱 Please present your e-ticket QR code when boarding.</p>
+        <p>Thank you for choosing <b>GoBus</b>. Have a safe journey!</p>
+        <hr/>
+        <small>This is an automated email. Please do not reply.</small>
+      </div>
+    `;
+
+    await transporter.sendMail({
+      from: `"GoBus Lanka" <${process.env.EMAIL_USER}>`,
+      to,
+      subject: "Payment Successful - GoBus Ticket Confirmation",
+      html,
+    });
+
+    console.log(`📩 Email sent successfully to ${to}`);
+  } catch (err) {
+    console.error("❌ Failed to send confirmation email:", err.message);
+  }
+};
+
+/* ================= EXISTING LOGIC (UNCHANGED) ================= */
+
 // Generate unique booking ID
 const generateBookingId = () => {
-    const timestamp = Date.now().toString(36);
-    const random = Math.random().toString(36).substr(2, 5);
-    return `BUS-${timestamp}-${random}`.toUpperCase();
+  const timestamp = Date.now().toString(36);
+  const random = Math.random().toString(36).substr(2, 5);
+  return `BUS-${timestamp}-${random}`.toUpperCase();
 };
 
 // Generate unique transaction ID
 const generateTransactionId = () => {
-    const timestamp = Date.now().toString(36);
-    const random = Math.random().toString(36).substr(2, 8);
-    return `TXN-${timestamp}-${random}`.toUpperCase();
+  const timestamp = Date.now().toString(36);
+  const random = Math.random().toString(36).substr(2, 8);
+  return `TXN-${timestamp}-${random}`.toUpperCase();
 };
 
-// Process manual payment (main payment processing endpoint)
+// Process manual payment
 router.post('/process-payment', requireAuth, async (req, res) => {
-    try {
-        console.log('💳 Payment processing started');
-        console.log('📋 Request body:', JSON.stringify(req.body, null, 2));
-        
-        const { 
-            cardholderName, 
-            passengerName, 
-            email, 
-            phone, 
-            amount, 
-            paymentMethod = 'card',
-            country = 'Sri Lanka',
-            existingBookingId,  // Add existing booking ID to trigger confirmation
-            bookingInfo  // Additional booking information from frontend
-        } = req.body;
+  try {
+    console.log('💳 Payment processing started');
+    console.log('📋 Request body:', JSON.stringify(req.body, null, 2));
 
-        // Validate required fields
-        if (!cardholderName || !passengerName || !email || !amount) {
-            return res.status(400).json({ 
-                message: 'Missing required fields: cardholderName, passengerName, email, amount' 
-            });
-        }
+    const { cardholderName, passengerName, email, phone, amount, paymentMethod = 'card', country = 'Sri Lanka', existingBookingId, bookingInfo } = req.body;
 
-        // Validate amount
-        if (amount <= 0) {
-            return res.status(400).json({ message: 'Amount must be greater than 0' });
-        }
-
-        // Generate IDs (use existing booking ID if provided, otherwise generate new one)
-        const bookingId = existingBookingId || generateBookingId();
-        const transactionId = generateTransactionId();
-
-        // Create payment record
-        const payment = new Payment({
-            bookingId,
-            cardholderName: cardholderName.trim(),
-            passengerName: passengerName.trim(),
-            email: email.trim().toLowerCase(),
-            phone: phone ? phone.trim() : '',
-            amount: parseFloat(amount),
-            transactionId,
-            status: 'completed', // For manual payments, assume success
-            paymentMethod,
-            currency: 'LKR',
-            country
-        });
-
-        await payment.save();
-
-        // Always create a persistent booking record after successful payment
-        let bookingConfirmed = false;
-        let persistentBookingData = null;
-
-        try {
-            // If we have an existing booking ID, find and confirm the in-memory booking
-            if (existingBookingId) {
-                let booking = null;
-                let trip = null;
-                let scheduleId = null;
-                
-                for (const [tripId, tripStore] of getAllTrips()) {
-                    if (tripStore.bookings.has(existingBookingId)) {
-                        booking = tripStore.bookings.get(existingBookingId);
-                        trip = tripStore;
-                        scheduleId = tripId;
-                        break;
-                    }
-                }
-
-                if (booking && booking.userId === req.user.id && booking.status === 'draft') {
-                    // Convert held seats to booked
-                    booking.seats.forEach(seatId => setSeatStatus(trip, seatId, 'booked'));
-                    
-                    // Update booking status
-                    booking.status = 'confirmed';
-                    booking.confirmedAt = new Date();
-                    
-                    // Remove the hold since booking is confirmed
-                    if (booking.holdId && trip.holds.has(booking.holdId)) {
-                        trip.holds.delete(booking.holdId);
-                    }
-                    
-                    // Prepare data for persistent booking from in-memory booking
-                    persistentBookingData = {
-                        bookingId: existingBookingId,
-                        userId: req.user.id,
-                        busId: 'BUS_' + scheduleId,
-                        scheduleId: scheduleId,
-                        route: {
-                            from: 'Unknown', // Should get from schedule data
-                            to: 'Unknown'   // Should get from schedule data
-                        },
-                        selectedSeats: booking.seats,
-                        departureTime: 'TBD', // Should get from schedule
-                        departureDate: new Date(), // Should get actual departure date
-                        passengers: booking.passengers || []
-                    };
-                    
-                    bookingConfirmed = true;
-                    console.log(`In-memory booking ${existingBookingId} confirmed after payment`);
-                }
-            }
-
-            // Create persistent booking record (either from in-memory data, booking info, or default payment data)
-            let bookingData = persistentBookingData;
-            
-            if (!bookingData && bookingInfo) {
-                // Use booking info from frontend
-                console.log('📋 Received booking info:', JSON.stringify(bookingInfo, null, 2));
-                // Try to parse a usable departureDate from bookingInfo.departureTime or bookingInfo.departureDate
-                let departureDate = null;
-                if (bookingInfo.departureDate) {
-                    const d = new Date(bookingInfo.departureDate);
-                    if (!isNaN(d)) departureDate = d;
-                }
-                if (!departureDate && bookingInfo.departureTime) {
-                    // Replace " at " with a space to help parsing like "Mon Sep 22 2025 at 15:00" -> "Mon Sep 22 2025 15:00"
-                    try {
-                        const cleaned = bookingInfo.departureTime.replace(/\sat\s/i, ' ');
-                        const d = new Date(cleaned);
-                        if (!isNaN(d)) departureDate = d;
-                    } catch (e) {
-                        // fallback below
-                    }
-                }
-
-                if (!departureDate) departureDate = new Date();
-
-                // Ensure passengers array exists; fall back to single passenger details from payment info
-                let passengers = Array.isArray(bookingInfo.passengers) ? bookingInfo.passengers.slice() : [];
-                if (passengers.length === 0) {
-                    passengers.push({
-                        name: passengerName || bookingInfo.passengerName || 'Passenger',
-                        email: (email || bookingInfo.email || '').toLowerCase(),
-                        phone: phone || bookingInfo.phone || ''
-                    });
-                }
-
-                bookingData = {
-                    bookingId: bookingId,
-                    userId: req.user?.id || null,
-                    busId: bookingInfo.busId || 'DIRECT_PAYMENT',
-                    scheduleId: bookingInfo.scheduleId || 'UNKNOWN',
-                    route: {
-                        from: bookingInfo.route?.from || 'Unknown',
-                        to: bookingInfo.route?.to || 'Unknown'
-                    },
-                    selectedSeats: bookingInfo.selectedSeats || [],
-                    departureTime: bookingInfo.departureTime || 'TBD',
-                    departureDate: departureDate,
-                    passengers
-                };
-                console.log('📋 Created booking data:', JSON.stringify(bookingData, null, 2));
-            }
-            
-            if (!bookingData) {
-                // Fallback to default payment data
-                bookingData = {
-                    bookingId: bookingId, // Use the generated booking ID
-                    userId: req.user?.id || null,
-                    busId: 'DIRECT_PAYMENT', // Indicates direct payment without seat selection
-                    scheduleId: 'UNKNOWN',
-                    route: {
-                        from: 'Direct Payment',
-                        to: 'Unknown Destination'
-                    },
-                    selectedSeats: [], // Empty if no seat selection was done
-                    departureTime: 'TBD',
-                    departureDate: new Date(),
-                    passengers: []
-                };
-            }
-
-            // Create the persistent booking record
-            // Derive passengerDetails from bookingData.passengers if available
-            const primaryPassenger = (Array.isArray(bookingData.passengers) && bookingData.passengers.length > 0)
-                ? bookingData.passengers[0]
-                : { name: passengerName, email, phone: phone || '' };
-
-            const persistentBooking = new Booking({
-                bookingId: bookingData.bookingId,
-                userId: bookingData.userId,
-                busId: bookingData.busId,
-                scheduleId: bookingData.scheduleId,
-                route: bookingData.route,
-                passengerDetails: {
-                    name: primaryPassenger.name || passengerName,
-                    email: (primaryPassenger.email || email || '').toLowerCase(),
-                    phone: primaryPassenger.phone || phone || ''
-                },
-                selectedSeats: bookingData.selectedSeats,
-                departureTime: bookingData.departureTime,
-                departureDate: bookingData.departureDate,
-                totalAmount: parseFloat(amount),
-                paymentId: payment._id,
-                status: 'pending', // Default status is pending, admin can confirm later
-                specialRequests: `Passengers: ${bookingData.passengers.length > 0 ? JSON.stringify(bookingData.passengers) : 'None specified'}`
-            });
-            
-            await persistentBooking.save();
-            console.log(`Persistent booking created: ${bookingData.bookingId} for payment ${payment._id}`);
-            
-        } catch (confirmError) {
-            console.error('Booking creation error after payment:', confirmError);
-            // Don't fail the payment if booking creation fails
-        }
-
-        res.status(201).json({
-            message: 'Payment processed successfully',
-            payment: {
-                id: payment._id,
-                bookingId: payment.bookingId,
-                transactionId: payment.transactionId,
-                amount: payment.amount,
-                status: payment.status,
-                passengerName: payment.passengerName,
-                email: payment.email
-            },
-            bookingConfirmed
-        });
-    } catch (error) {
-        console.error('Payment processing error:', error);
-        
-        if (error.code === 11000) {
-            return res.status(400).json({ 
-                message: 'Duplicate booking or transaction ID. Please try again.' 
-            });
-        }
-        
-        res.status(500).json({ 
-            message: 'Payment processing failed', 
-            error: error.message 
-        });
+    if (!cardholderName || !passengerName || !email || !amount) {
+      return res.status(400).json({ message: 'Missing required fields: cardholderName, passengerName, email, amount' });
     }
+
+    if (amount <= 0) {
+      return res.status(400).json({ message: 'Amount must be greater than 0' });
+    }
+
+    const bookingId = existingBookingId || generateBookingId();
+    const transactionId = generateTransactionId();
+
+    const payment = new Payment({
+      bookingId,
+      cardholderName: cardholderName.trim(),
+      passengerName: passengerName.trim(),
+      email: email.trim().toLowerCase(),
+      phone: phone ? phone.trim() : '',
+      amount: parseFloat(amount),
+      transactionId,
+      status: 'completed',
+      paymentMethod,
+      currency: 'LKR',
+      country,
+    });
+
+    await payment.save();
+
+    let bookingConfirmed = false;
+    let persistentBookingData = null;
+
+    try {
+      if (existingBookingId) {
+        let booking = null;
+        let trip = null;
+        let scheduleId = null;
+
+        for (const [tripId, tripStore] of getAllTrips()) {
+          if (tripStore.bookings.has(existingBookingId)) {
+            booking = tripStore.bookings.get(existingBookingId);
+            trip = tripStore;
+            scheduleId = tripId;
+            break;
+          }
+        }
+
+        if (booking && booking.userId === req.user.id && booking.status === 'draft') {
+          booking.seats.forEach(seatId => setSeatStatus(trip, seatId, 'booked'));
+          booking.status = 'confirmed';
+          booking.confirmedAt = new Date();
+
+          if (booking.holdId && trip.holds.has(booking.holdId)) {
+            trip.holds.delete(booking.holdId);
+          }
+
+          persistentBookingData = {
+            bookingId: existingBookingId,
+            userId: req.user.id,
+            busId: 'BUS_' + scheduleId,
+            scheduleId: scheduleId,
+            route: {
+              from: 'Unknown',
+              to: 'Unknown',
+            },
+            selectedSeats: booking.seats,
+            departureTime: 'TBD',
+            departureDate: new Date(),
+            passengers: booking.passengers || [],
+          };
+
+          bookingConfirmed = true;
+          console.log(`In-memory booking ${existingBookingId} confirmed after payment`);
+        }
+      }
+
+      let bookingData = persistentBookingData;
+
+      if (!bookingData && bookingInfo) {
+        console.log('📋 Received booking info:', JSON.stringify(bookingInfo, null, 2));
+        let departureDate = null;
+        if (bookingInfo.departureDate) {
+          const d = new Date(bookingInfo.departureDate);
+          if (!isNaN(d)) departureDate = d;
+        }
+        if (!departureDate && bookingInfo.departureTime) {
+          try {
+            const cleaned = bookingInfo.departureTime.replace(/\sat\s/i, ' ');
+            const d = new Date(cleaned);
+            if (!isNaN(d)) departureDate = d;
+          } catch (e) {}
+        }
+
+        if (!departureDate) departureDate = new Date();
+
+        let passengers = Array.isArray(bookingInfo.passengers) ? bookingInfo.passengers.slice() : [];
+        if (passengers.length === 0) {
+          passengers.push({
+            name: passengerName || bookingInfo.passengerName || 'Passenger',
+            email: (email || bookingInfo.email || '').toLowerCase(),
+            phone: phone || bookingInfo.phone || '',
+          });
+        }
+
+        bookingData = {
+          bookingId,
+          userId: req.user?.id || null,
+          busId: bookingInfo.busId || 'DIRECT_PAYMENT',
+          scheduleId: bookingInfo.scheduleId || 'UNKNOWN',
+          route: {
+            from: bookingInfo.route?.from || 'Unknown',
+            to: bookingInfo.route?.to || 'Unknown',
+          },
+          selectedSeats: bookingInfo.selectedSeats || [],
+          departureTime: bookingInfo.departureTime || 'TBD',
+          departureDate,
+          passengers,
+        };
+      }
+
+      if (!bookingData) {
+        bookingData = {
+          bookingId,
+          userId: req.user?.id || null,
+          busId: 'DIRECT_PAYMENT',
+          scheduleId: 'UNKNOWN',
+          route: { from: 'Direct Payment', to: 'Unknown Destination' },
+          selectedSeats: [],
+          departureTime: 'TBD',
+          departureDate: new Date(),
+          passengers: [],
+        };
+      }
+
+      const primaryPassenger = (Array.isArray(bookingData.passengers) && bookingData.passengers.length > 0)
+        ? bookingData.passengers[0]
+        : { name: passengerName, email, phone: phone || '' };
+
+      const persistentBooking = new Booking({
+        bookingId: bookingData.bookingId,
+        userId: bookingData.userId,
+        busId: bookingData.busId,
+        scheduleId: bookingData.scheduleId,
+        route: bookingData.route,
+        passengerDetails: {
+          name: primaryPassenger.name || passengerName,
+          email: (primaryPassenger.email || email || '').toLowerCase(),
+          phone: primaryPassenger.phone || phone || '',
+        },
+        selectedSeats: bookingData.selectedSeats,
+        departureTime: bookingData.departureTime,
+        departureDate: bookingData.departureDate,
+        totalAmount: parseFloat(amount),
+        paymentId: payment._id,
+        status: 'pending',
+        specialRequests: `Passengers: ${bookingData.passengers.length > 0 ? JSON.stringify(bookingData.passengers) : 'None specified'}`,
+      });
+
+      await persistentBooking.save();
+      console.log(`Persistent booking created: ${bookingData.bookingId} for payment ${payment._id}`);
+
+      /* ✅ SEND CONFIRMATION EMAIL HERE */
+      const ticketData = {
+        passengerName,
+        from: bookingInfo?.route?.from || "Unknown",
+        toLocation: bookingInfo?.route?.to || "Unknown",
+        date: bookingInfo?.departureDate
+          ? new Date(bookingInfo.departureDate).toLocaleDateString()
+          : "N/A",
+        time: bookingInfo?.departureTime || "N/A",
+        seat: (bookingInfo?.selectedSeats || []).join(", ") || "N/A",
+        busNo: bookingInfo?.busId || "N/A",
+        amount,
+        transactionId,
+      };
+      if (email) await sendPaymentSuccessEmail(email, ticketData);
+
+    } catch (confirmError) {
+      console.error('Booking creation error after payment:', confirmError);
+    }
+
+    res.status(201).json({
+      message: 'Payment processed successfully',
+      payment: {
+        id: payment._id,
+        bookingId: payment.bookingId,
+        transactionId: payment.transactionId,
+        amount: payment.amount,
+        status: payment.status,
+        passengerName: payment.passengerName,
+        email: payment.email,
+      },
+      bookingConfirmed,
+    });
+  } catch (error) {
+    console.error('Payment processing error:', error);
+    if (error.code === 11000) {
+      return res.status(400).json({ message: 'Duplicate booking or transaction ID. Please try again.' });
+    }
+    res.status(500).json({ message: 'Payment processing failed', error: error.message });
+  }
 });
+
+
+
 
 // Get payment by ID
 router.get('/:id', requireAuth, async (req, res) => {
