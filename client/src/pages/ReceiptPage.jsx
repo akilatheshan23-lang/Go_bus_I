@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 const API = import.meta.env.VITE_API_URL || "http://localhost:5001";
 //mino
 
+
 // E-Ticket Component
 const ETicket = ({ booking, payment }) => {
     return (
