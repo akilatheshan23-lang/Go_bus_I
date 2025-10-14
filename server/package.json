@@ -16,16 +16,10 @@
     "express": "^4.21.2",
     "express-validator": "^7.2.1",
     "jsonwebtoken": "^9.0.2",
-<<<<<<< HEAD
-    "mongoose": "^8.19.1",
-    "morgan": "^1.10.1",
-    "nanoid": "^5.1.6",
-=======
     "mongoose": "^8.5.0",
     "morgan": "^1.10.0",
     "nanoid": "^5.1.5",
     "nodemailer": "^7.0.9",
->>>>>>> Finance_and_promotion_Management
     "stripe": "^18.5.0"
   },
   "devDependencies": {
