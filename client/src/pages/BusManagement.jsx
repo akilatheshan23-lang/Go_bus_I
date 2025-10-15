@@ -100,6 +100,30 @@ export default function BusManagement() {
 
   async function handleSubmit(e) {
     e.preventDefault();
+    // Client-side validations
+    const busNoRegex = /^[A-Z]{2,3}-\d{4}$/;
+    if (!busNoRegex.test(busForm.busNo.trim())) {
+      return setMsg('Bus Number is invalid. Expected format: NB-1234 or NBN-1234 (2-3 uppercase letters, hyphen, 4 digits).');
+    }
+    if (!busForm.depot || !busForm.driver) {
+      return setMsg('Please fill all required fields (depot and driver).');
+    }
+    // Maintenance date cannot be in the future
+    if (busForm.lastMaintenanceDate) {
+      const sel = new Date(busForm.lastMaintenanceDate);
+      const today = new Date();
+      // normalize to date-only for comparison
+      sel.setHours(0,0,0,0);
+      today.setHours(0,0,0,0);
+      if (sel > today) {
+        return setMsg('Maintenance date cannot be in the future.');
+      }
+    }
+    // Insurance validations
+    if (!busForm.insurance || !busForm.insurance.policyNumber.trim() || !busForm.insurance.provider.trim()) {
+      return setMsg('Insurance Policy Number and Provider are required.');
+    }
+
     try {
       if (editingBus) {
         await axios.put(`${API}/api/admin/buses/${editingBus._id}`, busForm, { withCredentials: true });
@@ -183,7 +207,34 @@ export default function BusManagement() {
   }
 
   if (loading) {
-    return (
+    
+// --- Validation Added ---
+const [errors, setErrors] = useState({});
+
+const validateForm = () => {
+  let newErrors = {};
+
+  if (!busNumber?.trim()) newErrors.busNumber = "Please enter Bus Number";
+  else if (!/^[A-Z]{2,3}-\d{4}$/.test(busNumber))
+    newErrors.busNumber = "Bus Number must be like NC-5678 or BNC-6752";
+
+  if (!depot?.trim()) newErrors.depot = "Please enter Depot";
+  if (!driverId) newErrors.driver = "Please select a Driver";
+  if (!maintenanceDate) newErrors.maintenanceDate = "Please select Maintenance Date";
+  else if (new Date(maintenanceDate) > new Date())
+    newErrors.maintenanceDate = "Maintenance date cannot be in the future";
+
+  if (!insurancePolicyNumber?.trim())
+    newErrors.insurancePolicyNumber = "Please enter Insurance Policy Number";
+  if (!insuranceProvider?.trim())
+    newErrors.insuranceProvider = "Please enter Insurance Provider";
+
+  setErrors(newErrors);
+  return Object.keys(newErrors).length === 0;
+};
+// --- End Validation ---
+
+return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="text-lg text-gray-600">Loading...</div>
       </div>
