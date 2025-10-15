@@ -5,6 +5,8 @@ import axios from "axios";
 const API = import.meta.env.VITE_API_URL || "http://localhost:5001";
 
 export default function DriverManagement() {
+  const todayStr = new Date().toISOString().split('T')[0];
+  const maxDobStr = (() => { const d = new Date(); d.setFullYear(d.getFullYear() - 20); return d.toISOString().split('T')[0]; })();
   const { user, isAuthenticated, loading } = useAuth();
   const navigate = useNavigate();
   const [drivers, setDrivers] = useState([]);
@@ -95,6 +97,35 @@ export default function DriverManagement() {
   async function handleSubmit(e) {
     e.preventDefault();
     try {
+      // client-side validations
+      const phoneRegex = /^\d{10}$/;
+      if (!phoneRegex.test(driverForm.phone)) {
+        setMsg('Error: Driver phone must be 10 digits.');
+        return;
+      }
+      if (!driverForm.address || driverForm.address.trim().length === 0) {
+        setMsg('Error: Address is required.');
+        return;
+      }
+      const licRegex = /^SL-\d{8}$/;
+      if (!licRegex.test(driverForm.licenseId)) {
+        setMsg('Error: License ID must be in format SL-######## (8 digits).');
+        return;
+      }
+      if (driverForm.emergencyContact && !phoneRegex.test(driverForm.emergencyContact.phone)) {
+        setMsg('Error: Emergency contact phone must be 10 digits.');
+        return;
+      }
+      // dateOfBirth already limited by max, but double-check age >=20
+      if (driverForm.dateOfBirth) {
+        const dob = new Date(driverForm.dateOfBirth);
+        const minDob = new Date(); minDob.setFullYear(minDob.getFullYear() - 20);
+        if (dob > minDob) {
+          setMsg('Error: Driver must be at least 20 years old.');
+          return;
+        }
+      }
+
       if (editingDriver) {
         await axios.put(`${API}/api/admin/drivers/${editingDriver._id}`, driverForm, { withCredentials: true });
         setMsg("Driver updated successfully!");
@@ -191,7 +222,26 @@ export default function DriverManagement() {
 
 
   if (loading) {
-    return (
+    
+// --- Validation Added ---
+const [errors, setErrors] = useState({});
+
+const validateForm = () => {
+  let newErrors = {};
+
+  if (!firstName?.trim()) newErrors.firstName = "Please enter First Name";
+  if (!lastName?.trim()) newErrors.lastName = "Please enter Last Name";
+  if (!experience?.trim()) newErrors.experience = "Please enter Experience";
+  if (!phoneNumber?.trim()) newErrors.phoneNumber = "Please enter Phone Number";
+  if (!email?.trim()) newErrors.email = "Please enter Email";
+  if (!licenseNumber?.trim()) newErrors.licenseNumber = "Please enter License Number";
+
+  setErrors(newErrors);
+  return Object.keys(newErrors).length === 0;
+};
+// --- End Validation ---
+
+return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="text-lg text-gray-600">Loading...</div>
       </div>
